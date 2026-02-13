@@ -37,6 +37,7 @@ mod app_cmd;
 mod desktop_app;
 mod mcp_cmd;
 mod team_cmd;
+mod team_dashboard;
 #[cfg(not(windows))]
 mod wsl_paths;
 

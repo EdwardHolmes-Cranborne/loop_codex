@@ -71,6 +71,39 @@ pub async fn run_daemon(
 
     tracing::info!("spawned {} agents", handles.len());
 
+    // Create a GitCoordinator for stale lock management
+    let git = super::git_coordinator::GitCoordinator::new(
+        PathBuf::from("."),
+        spec.git.remote.clone(),
+        spec.git.branch.clone(),
+        spec.git.merge_strategy.clone(),
+        30, // 30-minute lock timeout
+    );
+
+    // Write initial heartbeat files for all agents
+    let agents_state_dir = state_dir.join("agents");
+    std::fs::create_dir_all(&agents_state_dir)
+        .map_err(|e| DaemonError::Io(agents_state_dir.clone(), e))?;
+    for handle in &handles {
+        let now = chrono::Utc::now();
+        let hb = super::git_coordinator::AgentHeartbeat {
+            agent_id: handle.agent.id.clone(),
+            pid: handle.pid().unwrap_or(0),
+            specialization: handle.agent.specialization.clone(),
+            status: format!("{:?}", handle.agent.status),
+            current_task: None,
+            current_branch: None,
+            heartbeat: now,
+            sessions_completed: 0,
+            total_cost_usd: 0.0,
+            last_commit: None,
+            started_at: now,
+            consecutive_failures: 0,
+        };
+        let hb_path = agents_state_dir.join(format!("{}.json", handle.agent.id));
+        let _ = std::fs::write(&hb_path, serde_json::to_string_pretty(&hb).unwrap_or_default());
+    }
+
     // Monitor loop
     let heartbeat_interval = std::time::Duration::from_secs(30);
 
@@ -83,7 +116,18 @@ pub async fn run_daemon(
             break;
         }
 
-        // Check agent health
+        // Cleanup stale task locks
+        match git.cleanup_stale_locks() {
+            Ok(released) if !released.is_empty() => {
+                tracing::info!(count = released.len(), "cleaned up stale locks: {:?}", released);
+            }
+            Err(e) => {
+                tracing::warn!("stale lock cleanup failed: {e}");
+            }
+            _ => {}
+        }
+
+        // Check agent health and update heartbeat files
         let mut all_done = true;
         for handle in &mut handles {
             if handle.is_alive() {
@@ -95,6 +139,23 @@ pub async fn run_daemon(
                     "agent exited (code: {:?})",
                     exit_code
                 );
+                // Update heartbeat file to reflect exit
+                let hb_path = agents_state_dir.join(format!("{}.json", handle.agent.id));
+                let hb = super::git_coordinator::AgentHeartbeat {
+                    agent_id: handle.agent.id.clone(),
+                    pid: handle.pid().unwrap_or(0),
+                    specialization: handle.agent.specialization.clone(),
+                    status: "exited".to_string(),
+                    current_task: None,
+                    current_branch: None,
+                    heartbeat: chrono::Utc::now(),
+                    sessions_completed: handle.agent.sessions_completed,
+                    total_cost_usd: handle.agent.total_cost_usd,
+                    last_commit: None,
+                    started_at: handle.agent.started_at,
+                    consecutive_failures: handle.agent.consecutive_failures,
+                };
+                let _ = std::fs::write(&hb_path, serde_json::to_string_pretty(&hb).unwrap_or_default());
             }
         }
 

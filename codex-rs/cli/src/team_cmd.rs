@@ -633,15 +633,6 @@ async fn cmd_tests(args: TeamTestsArgs) -> anyhow::Result<()> {
 // Dashboard
 // ---------------------------------------------------------------------------
 
-async fn cmd_dashboard(_args: TeamDashboardArgs) -> anyhow::Result<()> {
-    // Phase 4: full TUI dashboard. For now, show a loop of status.
-    println!("📊 Dashboard (Phase 4 — full TUI coming soon)");
-    println!("Use 'codex team status --watch 2' for auto-refreshing status.\n");
-
-    // Show current status inline
-    cmd_status(TeamStatusArgs {
-        json: false,
-        watch: None,
-    })
-    .await
+async fn cmd_dashboard(args: TeamDashboardArgs) -> anyhow::Result<()> {
+    super::team_dashboard::run_dashboard(args.refresh).await
 }
