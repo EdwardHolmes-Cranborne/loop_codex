@@ -106,6 +106,7 @@ pub mod shell_snapshot;
 pub mod skills;
 pub mod spawn;
 pub mod swarm;
+pub mod team;
 pub mod state_db;
 pub mod terminal;
 mod tools;
