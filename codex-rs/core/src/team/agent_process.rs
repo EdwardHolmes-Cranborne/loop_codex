@@ -188,51 +188,61 @@ pub fn spawn_agent(
     std::fs::create_dir_all(&config.log_dir)
         .map_err(|e| AgentSpawnError::Io(config.log_dir.clone(), e))?;
 
-    // Use git worktree for isolation: each agent gets a worktree on a new branch.
-    // If the worktree already exists, remove and recreate.
-    let worktree_branch = format!("agent/{agent_id}");
-
-    if work_dir.exists() {
-        // Remove existing worktree
-        let _ = Command::new("git")
-            .args(["worktree", "remove", "--force"])
-            .arg(&work_dir)
-            .current_dir(&config.repo_root)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        // Clean up the directory if it still exists
-        let _ = std::fs::remove_dir_all(&work_dir);
-    }
-
-    // Delete the branch if it exists (from a previous run)
-    let _ = Command::new("git")
-        .args(["branch", "-D", &worktree_branch])
-        .current_dir(&config.repo_root)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-
-    // Create worktree with a new branch based on the team branch
-    let wt_status = Command::new("git")
-        .args([
-            "worktree",
-            "add",
-            "-b",
-            &worktree_branch,
-        ])
-        .arg(&work_dir)
-        .arg(&config.branch)
+    // Determine if we're inside a git repository
+    let in_git_repo = Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
         .current_dir(&config.repo_root)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .map_err(|e| AgentSpawnError::Io(work_dir.clone(), e))?;
+        .map(|s| s.success())
+        .unwrap_or(false);
 
-    if !wt_status.success() {
-        return Err(AgentSpawnError::CloneFailed(format!(
-            "{agent_id} (git worktree add failed)"
-        )));
+    if in_git_repo {
+        // Use git worktree for isolation: each agent gets a worktree on a new branch.
+        let worktree_branch = format!("agent/{agent_id}");
+
+        if work_dir.exists() {
+            // Remove existing worktree
+            let _ = Command::new("git")
+                .args(["worktree", "remove", "--force"])
+                .arg(&work_dir)
+                .current_dir(&config.repo_root)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            let _ = std::fs::remove_dir_all(&work_dir);
+        }
+
+        // Delete the branch if it exists (from a previous run)
+        let _ = Command::new("git")
+            .args(["branch", "-D", &worktree_branch])
+            .current_dir(&config.repo_root)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+
+        // Create worktree with a new branch based on the team branch
+        let wt_status = Command::new("git")
+            .args(["worktree", "add", "-b", &worktree_branch])
+            .arg(&work_dir)
+            .arg(&config.branch)
+            .current_dir(&config.repo_root)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|e| AgentSpawnError::Io(work_dir.clone(), e))?;
+
+        if !wt_status.success() {
+            // Worktree failed — fall back to plain directory
+            tracing::warn!("git worktree failed for {agent_id}, using plain directory");
+            std::fs::create_dir_all(&work_dir)
+                .map_err(|e| AgentSpawnError::Io(work_dir.clone(), e))?;
+        }
+    } else {
+        // Not in a git repo — just create a working directory
+        std::fs::create_dir_all(&work_dir)
+            .map_err(|e| AgentSpawnError::Io(work_dir.clone(), e))?;
     }
 
     // Build the task prompt for the agent
@@ -247,7 +257,7 @@ pub fn spawn_agent(
         let pid = super::terminal_window::open_agent_window(
             agent_id,
             &config.codex_binary,
-            &work_dir,
+            &config.repo_root,
             &task_prompt,
             &log_file,
             config.provider_flag.as_deref(),
@@ -282,7 +292,7 @@ pub fn spawn_agent(
             "run",
             "--rm",
             "-v",
-            &format!("{}:/workspace", work_dir.display()),
+            &format!("{}:/workspace", config.repo_root.display()),
             "-w",
             "/workspace",
             "-e",
@@ -300,7 +310,7 @@ pub fn spawn_agent(
         let mut c = Command::new(&config.codex_binary);
         c.arg("exec");
         c.arg(&task_prompt);
-        c.current_dir(&work_dir);
+        c.current_dir(&config.repo_root);
         c.env("CODEX_TEAM_AGENT_ID", agent_id);
         c.env(
             "CODEX_TEAM_SPEC",
