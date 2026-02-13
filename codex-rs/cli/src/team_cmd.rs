@@ -85,9 +85,9 @@ pub struct TeamLaunchArgs {
     #[clap(short = 'n', long)]
     pub agents: Option<u32>,
 
-    /// Run agents in Docker containers.
+    /// Disable Docker isolation (agents run as local processes instead).
     #[clap(long)]
-    pub docker: bool,
+    pub no_docker: bool,
 
     /// Docker image to use (default from spec).
     #[clap(long)]
@@ -101,6 +101,22 @@ pub struct TeamLaunchArgs {
     #[clap(long)]
     pub model: Option<String>,
 
+    /// Use Synthetic API provider.
+    #[clap(long)]
+    pub synthetic: bool,
+
+    /// Use OpenRouter API provider.
+    #[clap(long)]
+    pub openrouter: bool,
+
+    /// Use LM Studio at 127.0.0.1:1234.
+    #[clap(long)]
+    pub local: bool,
+
+    /// Use local open source model provider (LM Studio or Ollama).
+    #[clap(long)]
+    pub oss: bool,
+
     /// Skip initial test validation.
     #[clap(long)]
     pub skip_tests: bool,
@@ -112,6 +128,10 @@ pub struct TeamLaunchArgs {
     /// Maximum total budget in USD.
     #[clap(long)]
     pub budget: Option<f64>,
+
+    /// Disable GUI mode (don't open Terminal.app windows for agents).
+    #[clap(long)]
+    pub no_gui: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -318,7 +338,28 @@ async fn cmd_launch(args: TeamLaunchArgs) -> anyhow::Result<()> {
     let spec = codex_core::team::team_spec::load_team_spec(&spec_path)?;
 
     let agent_count = args.agents.unwrap_or(spec.agents.count);
-    println!("🚀 Launching team with {agent_count} agents...");
+
+    // Docker is default; --no-docker disables it
+    let use_docker = !args.no_docker;
+    // GUI is default on macOS; --no-gui disables it
+    let gui_mode = !args.no_gui;
+
+    // Map provider convenience flags
+    let provider_flag = if args.synthetic {
+        Some("--synthetic".to_string())
+    } else if args.openrouter {
+        Some("--openrouter".to_string())
+    } else if args.local {
+        Some("--local".to_string())
+    } else if args.oss {
+        Some("--oss".to_string())
+    } else {
+        None
+    };
+
+    let mode = if use_docker { "Docker" } else { "local" };
+    let gui_label = if gui_mode { " (GUI)" } else { "" };
+    println!("🚀 Launching team with {agent_count} agents ({mode}{gui_label})...");
 
     if args.foreground {
         println!("   Running in foreground (Ctrl+C to stop)");
@@ -330,8 +371,10 @@ async fn cmd_launch(args: TeamLaunchArgs) -> anyhow::Result<()> {
     codex_core::team::team_daemon::run_daemon(
         spec,
         agent_count,
-        args.docker,
+        use_docker,
         args.foreground,
+        gui_mode,
+        provider_flag,
     )
     .await?;
 

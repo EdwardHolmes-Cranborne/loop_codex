@@ -106,8 +106,8 @@ impl AgentProcess {
 pub struct SpawnConfig {
     /// Path to the codex binary.
     pub codex_binary: PathBuf,
-    /// Repository URL to clone.
-    pub repo_url: String,
+    /// Repository root directory (used for git worktree).
+    pub repo_root: PathBuf,
     /// Team branch name.
     pub branch: String,
     /// Base directory for agent working directories.
@@ -122,8 +122,12 @@ pub struct SpawnConfig {
     pub model_provider: Option<String>,
     /// Model override.
     pub model: Option<String>,
+    /// Provider convenience flag (e.g. "--synthetic", "--oss").
+    pub provider_flag: Option<String>,
     /// Log directory.
     pub log_dir: PathBuf,
+    /// Open each agent in its own Terminal.app window.
+    pub gui_mode: bool,
 }
 
 /// Handle for a spawned agent process.
@@ -169,7 +173,7 @@ impl AgentHandle {
 /// Spawn a single agent process.
 ///
 /// The agent is launched as a `codex exec` subprocess with the autonomous
-/// loop script. Each agent gets its own clone of the repository.
+/// loop script. Each agent gets its own git worktree for isolation.
 pub fn spawn_agent(
     agent_id: &str,
     specialization: Option<&str>,
@@ -179,35 +183,91 @@ pub fn spawn_agent(
     let log_file = config.log_dir.join(format!("{agent_id}.log"));
 
     // Ensure directories exist
-    std::fs::create_dir_all(&work_dir)
-        .map_err(|e| AgentSpawnError::Io(work_dir.clone(), e))?;
+    std::fs::create_dir_all(&config.work_base_dir)
+        .map_err(|e| AgentSpawnError::Io(config.work_base_dir.clone(), e))?;
     std::fs::create_dir_all(&config.log_dir)
         .map_err(|e| AgentSpawnError::Io(config.log_dir.clone(), e))?;
 
-    // Clone the repo if work_dir is empty
-    if std::fs::read_dir(&work_dir)
-        .map(|mut d| d.next().is_none())
-        .unwrap_or(true)
-    {
-        let clone_status = Command::new("git")
-            .args([
-                "clone",
-                "--branch",
-                &config.branch,
-                &config.repo_url,
-                ".",
-            ])
-            .current_dir(&work_dir)
+    // Use git worktree for isolation: each agent gets a worktree on a new branch.
+    // If the worktree already exists, remove and recreate.
+    let worktree_branch = format!("agent/{agent_id}");
+
+    if work_dir.exists() {
+        // Remove existing worktree
+        let _ = Command::new("git")
+            .args(["worktree", "remove", "--force"])
+            .arg(&work_dir)
+            .current_dir(&config.repo_root)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .status()
-            .map_err(|e| AgentSpawnError::Io(work_dir.clone(), e))?;
-
-        if !clone_status.success() {
-            return Err(AgentSpawnError::CloneFailed(agent_id.to_string()));
-        }
+            .status();
+        // Clean up the directory if it still exists
+        let _ = std::fs::remove_dir_all(&work_dir);
     }
 
+    // Delete the branch if it exists (from a previous run)
+    let _ = Command::new("git")
+        .args(["branch", "-D", &worktree_branch])
+        .current_dir(&config.repo_root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+
+    // Create worktree with a new branch based on the team branch
+    let wt_status = Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            "-b",
+            &worktree_branch,
+        ])
+        .arg(&work_dir)
+        .arg(&config.branch)
+        .current_dir(&config.repo_root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map_err(|e| AgentSpawnError::Io(work_dir.clone(), e))?;
+
+    if !wt_status.success() {
+        return Err(AgentSpawnError::CloneFailed(format!(
+            "{agent_id} (git worktree add failed)"
+        )));
+    }
+
+    // Build the task prompt for the agent
+    let task_prompt = if let Some(spec) = specialization {
+        format!("You are agent '{agent_id}' with specialization '{spec}'. Check TASKS.md for available tasks, claim one, and work on it.")
+    } else {
+        format!("You are agent '{agent_id}'. Check TASKS.md for available tasks, claim one, and work on it.")
+    };
+
+    // --- GUI mode: open in a new Terminal.app window ---
+    if config.gui_mode {
+        let pid = super::terminal_window::open_agent_window(
+            agent_id,
+            &config.codex_binary,
+            &work_dir,
+            &task_prompt,
+            &log_file,
+            config.provider_flag.as_deref(),
+            config.model_provider.as_deref(),
+            config.model.as_deref(),
+        )
+        .map_err(|e| AgentSpawnError::SpawnFailed(agent_id.to_string(), e))?;
+
+        let mut agent =
+            AgentProcess::new(agent_id.to_string(), specialization.map(String::from), work_dir);
+        agent.pid = Some(pid);
+        agent.status = AgentStatus::ClaimingTask;
+
+        return Ok(AgentHandle {
+            agent,
+            child: None, // Terminal.app owns the process
+        });
+    }
+
+    // --- Headless mode ---
     // Open log file for stdout/stderr
     let log = std::fs::File::create(&log_file)
         .map_err(|e| AgentSpawnError::Io(log_file.clone(), e))?;
@@ -238,7 +298,8 @@ pub fn spawn_agent(
         c
     } else {
         let mut c = Command::new(&config.codex_binary);
-        c.args(["exec", "--no-interactive"]);
+        c.arg("exec");
+        c.arg(&task_prompt);
         c.current_dir(&work_dir);
         c.env("CODEX_TEAM_AGENT_ID", agent_id);
         c.env(
@@ -251,12 +312,16 @@ pub fn spawn_agent(
         c
     };
 
+    // Add provider convenience flag
+    if let Some(ref flag) = config.provider_flag {
+        cmd.arg(flag);
+    }
     // Add model overrides
     if let Some(ref provider) = config.model_provider {
         cmd.args(["--provider", provider]);
     }
     if let Some(ref model) = config.model {
-        cmd.args(["--model", model]);
+        cmd.args(["-m", model]);
     }
 
     // Spawn

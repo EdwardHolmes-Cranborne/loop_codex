@@ -14,6 +14,7 @@ pub mod patrol;
 pub mod task_board;
 pub mod team_daemon;
 pub mod team_spec;
+pub mod terminal_window;
 
 pub use agent_process::{AgentProcess, AgentStatus};
 pub use cost_tracker::{CostEntry, CostTracker};

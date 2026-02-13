@@ -20,6 +20,8 @@ pub async fn run_daemon(
     agent_count: u32,
     use_docker: bool,
     _foreground: bool,
+    gui_mode: bool,
+    provider_flag: Option<String>,
 ) -> Result<(), DaemonError> {
     let team_dir = PathBuf::from(".codex-team");
     let state_dir = team_dir.join("state");
@@ -38,12 +40,14 @@ pub async fn run_daemon(
     let codex_binary = std::env::current_exe()
         .unwrap_or_else(|_| PathBuf::from("codex"));
 
-    let repo_url = ".".to_string();
+    // Use the current directory as repo root
+    let repo_root = std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."));
     let branch = spec.git.branch.clone();
 
     let spawn_config = super::agent_process::SpawnConfig {
         codex_binary,
-        repo_url,
+        repo_root,
         branch,
         work_base_dir: team_dir.join("workdirs"),
         team_spec_path: team_dir.join("team_spec.yaml"),
@@ -51,7 +55,9 @@ pub async fn run_daemon(
         docker_image: "codex:latest".to_string(),
         model_provider: spec.agents.model_provider.clone(),
         model: spec.agents.model.clone(),
+        provider_flag,
         log_dir: team_dir.join("logs"),
+        gui_mode,
     };
 
     // Spawn agents
