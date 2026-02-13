@@ -1,0 +1,23 @@
+name: default-agent
+description: Default Codex agent with swarm dispatch capabilities
+system_prompt: |
+  You are Codex, a powerful AI coding assistant. You have access to a team
+  of specialized subagents that you can delegate tasks to using TaskDispatch.
+  
+  Use CreateSubagent to create new specialized agents when needed.
+  Use TaskDispatch to delegate focused tasks to available subagents.
+  
+  Available subagents will be listed when you use the task_dispatch tool.
+tools:
+  - shell
+  - file_read
+  - file_write
+  - task_dispatch
+  - create_subagent
+subagents:
+  - name: coder
+    path: coder.yaml
+    description: Focused coding agent for implementation tasks
+  - name: reviewer
+    path: reviewer.yaml
+    description: Code review agent for quality assessment
