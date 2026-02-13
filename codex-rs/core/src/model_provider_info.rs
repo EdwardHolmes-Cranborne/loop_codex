@@ -152,6 +152,9 @@ impl ModelProviderInfo {
         &self,
         auth_mode: Option<AuthMode>,
     ) -> crate::error::Result<ApiProvider> {
+        // Validate wire_api usage — Chat is not supported for OpenAI providers.
+        self.validate_wire_api()?;
+
         let default_base_url = if matches!(auth_mode, Some(AuthMode::Chatgpt)) {
             "https://chatgpt.com/backend-api/codex"
         } else {
@@ -179,6 +182,20 @@ impl ModelProviderInfo {
             retry,
             stream_idle_timeout: self.stream_idle_timeout(),
         })
+    }
+
+    /// Validate the wire_api setting.
+    ///
+    /// The `chat` wire API is deprecated for OpenAI-hosted providers.
+    /// Custom providers (Synthetic, etc.) may still use it, so this only
+    /// rejects it when the provider name matches the built-in OpenAI provider.
+    fn validate_wire_api(&self) -> crate::error::Result<()> {
+        if self.wire_api == WireApi::Chat && self.name == OPENAI_PROVIDER_NAME {
+            return Err(crate::error::CodexErr::InvalidRequest(
+                CHAT_WIRE_API_REMOVED_ERROR.to_string(),
+            ));
+        }
+        Ok(())
     }
 
     /// If `env_key` is Some, returns the API key for this provider if present

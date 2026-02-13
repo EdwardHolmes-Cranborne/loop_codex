@@ -101,6 +101,33 @@ impl SafetyGuard {
             risk_category: None,
         }
     }
+
+    /// Check a command and also produce the LLM safety prompt for Phase 3 analysis.
+    ///
+    /// Returns `(verdict, Option<llm_prompt>)`. If Phase 1/2 already blocked the
+    /// command, `llm_prompt` is `None`. Otherwise, the caller can send `llm_prompt`
+    /// to an LLM for deeper analysis.
+    pub fn check_with_llm_prompt(&self, command: &str) -> (SafetyVerdict, Option<String>) {
+        let verdict = self.check(command);
+
+        if !verdict.safe || !self.enabled {
+            // Already blocked or guard disabled — no need for LLM analysis.
+            return (verdict, None);
+        }
+
+        // Phase 3: Build the LLM prompt for the caller to submit.
+        let llm_prompt = build_llm_safety_prompt(command);
+        (verdict, Some(llm_prompt))
+    }
+}
+
+/// Build the full LLM safety analysis prompt for a given command.
+///
+/// Uses `SAFETY_ANALYSIS_PROMPT` as the system prompt prefix and appends
+/// the command to analyze. The caller is responsible for sending this
+/// to an LLM and parsing the JSON response.
+pub fn build_llm_safety_prompt(command: &str) -> String {
+    format!("{}{}", SAFETY_ANALYSIS_PROMPT, command)
 }
 
 /// Check against hardcoded blocklist of obviously dangerous commands.
@@ -207,7 +234,7 @@ fn check_heuristics(command: &str) -> Option<SafetyVerdict> {
     None
 }
 
-/// System prompt for the LLM-based safety analysis (Phase 3 — future use).
+/// System prompt for the LLM-based safety analysis (Phase 3).
 pub const SAFETY_ANALYSIS_PROMPT: &str = "\
 You are a security auditor. Analyze the following shell command for safety risks.\n\n\
 Consider:\n\

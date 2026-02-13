@@ -213,6 +213,7 @@ use crate::skills::injection::tool_kind_for_path;
 use crate::skills::resolve_skill_dependencies_for_turn;
 use crate::state::ActiveTurn;
 use crate::state::SessionServices;
+use crate::swarm::LaborMarket;
 use crate::state::SessionState;
 use crate::state_db;
 use crate::tasks::GhostSnapshotTask;
@@ -1191,6 +1192,7 @@ impl Session {
         });
 
         let services = SessionServices {
+            labor_market: Arc::new(LaborMarket::new()),
             mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::default())),
             mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
             unified_exec_manager: UnifiedExecProcessManager::default(),
@@ -6795,6 +6797,7 @@ mod tests {
 
         let file_watcher = Arc::new(FileWatcher::noop());
         let services = SessionServices {
+            labor_market: Arc::new(LaborMarket::new()),
             mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::default())),
             mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
             unified_exec_manager: UnifiedExecProcessManager::default(),
@@ -6941,6 +6944,7 @@ mod tests {
 
         let file_watcher = Arc::new(FileWatcher::noop());
         let services = SessionServices {
+            labor_market: Arc::new(LaborMarket::new()),
             mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::default())),
             mcp_startup_cancellation_token: Mutex::new(CancellationToken::new()),
             unified_exec_manager: UnifiedExecProcessManager::default(),

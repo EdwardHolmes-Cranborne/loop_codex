@@ -1,18 +1,17 @@
 //! Handler for the `feature_dev` tool.
 //!
-//! Exposes the 7-phase structured feature development workflow as a callable
-//! tool. The model can initiate a feature development workflow that progresses
-//! through Discovery → Exploration → Clarification → Architecture →
-//! Implementation → Review → Summary.
+//! Spawns a `FeatureDevTask` that orchestrates the 7-phase structured
+//! feature development workflow: Discovery → Exploration → Clarification →
+//! Architecture → Implementation → Review → Summary.
+
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde::Deserialize;
 
 use crate::function_tool::FunctionCallError;
-use crate::tasks::feature_dev::{
-    FeatureDevConfig, FeatureDevPhase, FeatureDevStatus, PhaseOutput,
-    build_phase_prompt,
-};
+use crate::tasks::FeatureDevTask;
+use crate::tasks::feature_dev::{FeatureDevConfig, FeatureDevPhase};
 use crate::tools::context::{ToolInvocation, ToolOutput, ToolPayload};
 use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::{ToolHandler, ToolKind};
@@ -23,12 +22,6 @@ use codex_protocol::models::FunctionCallOutputBody;
 struct FeatureDevArgs {
     /// The feature request / description.
     feature_request: String,
-    /// Which phase to generate a prompt for (default: "discovery").
-    #[serde(default = "default_phase")]
-    phase: String,
-    /// Prior phase outputs as JSON array of {phase, output} objects.
-    #[serde(default)]
-    prior_outputs: Option<String>,
     /// Number of parallel explorer agents for Phase 2 (default: 3).
     #[serde(default)]
     explorer_count: Option<usize>,
@@ -40,10 +33,6 @@ struct FeatureDevArgs {
     skip_clarification: Option<bool>,
 }
 
-fn default_phase() -> String {
-    "discovery".to_string()
-}
-
 pub struct FeatureDevHandler;
 
 #[async_trait]
@@ -53,10 +42,13 @@ impl ToolHandler for FeatureDevHandler {
     }
 
     async fn is_mutating(&self, _invocation: &ToolInvocation) -> bool {
-        false
+        true
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<ToolOutput, FunctionCallError> {
+        let session = Arc::clone(&invocation.session);
+        let turn = Arc::clone(&invocation.turn);
+
         let arguments = match invocation.payload {
             ToolPayload::Function { arguments } => arguments,
             _ => {
@@ -68,97 +60,47 @@ impl ToolHandler for FeatureDevHandler {
 
         let args: FeatureDevArgs = parse_arguments(&arguments)?;
 
-        let phase = match args.phase.as_str() {
-            "discovery" => FeatureDevPhase::Discovery,
-            "exploration" => FeatureDevPhase::Exploration,
-            "clarification" => FeatureDevPhase::Clarification,
-            "architecture" => FeatureDevPhase::Architecture,
-            "implementation" => FeatureDevPhase::Implementation,
-            "review" => FeatureDevPhase::Review,
-            "summary" => FeatureDevPhase::Summary,
-            _ => {
-                return Ok(ToolOutput::Function {
-                    body: FunctionCallOutputBody::Text(format!(
-                        "Unknown phase '{}'. Valid phases: {}",
-                        args.phase,
-                        FeatureDevPhase::all()
-                            .iter()
-                            .map(|p| p.label())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )),
-                    success: Some(false),
-                });
-            }
-        };
-
         let config = FeatureDevConfig {
-            feature_request: args.feature_request,
+            feature_request: args.feature_request.clone(),
             explorer_count: args.explorer_count.unwrap_or(3),
             reviewer_count: args.reviewer_count.unwrap_or(2),
             skip_clarification: args.skip_clarification.unwrap_or(false),
         };
 
-        // Parse prior outputs if provided.
-        let prior_outputs: Vec<PhaseOutput> = if let Some(ref prior_json) = args.prior_outputs {
-            serde_json::from_str(prior_json).unwrap_or_default()
-        } else {
-            vec![]
-        };
+        // Spawn the feature development task.
+        let task = FeatureDevTask { config: config.clone() };
+        session.spawn_task(turn, Vec::new(), task).await;
 
-        // Build the phase prompt.
-        let prompt = build_phase_prompt(&config, phase, &prior_outputs);
+        // Build confirmation response.
+        let phase_labels = FeatureDevPhase::all()
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let agent = p.agent_role().unwrap_or("general");
+                format!("{}. **{}** (agent: `{}`)", i + 1, p.label(), agent)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
 
-        // Build status info.
-        let status = FeatureDevStatus {
-            current_phase: phase,
-            phase_outputs: prior_outputs,
-        };
-
-        // Build response.
-        let mut result = String::new();
-        result.push_str(&format!(
-            "# Feature Development — {} Phase\n\n",
-            phase.label()
-        ));
-
-        // Show agent role if applicable.
-        if let Some(role) = phase.agent_role() {
-            result.push_str(&format!("**Agent role:** `{}`\n\n", role));
-        }
-
-        result.push_str(&format!(
-            "**Feature:** {}\n\
-             **Phase:** {} ({}/{})\n\
-             **Prior phases completed:** {}\n\n",
+        let output = format!(
+            "# Feature Development Launched\n\n\
+             **Feature:** {}\n\
+             **Explorers:** {}\n\
+             **Reviewers:** {}\n\
+             **Skip clarification:** {}\n\n\
+             ## Phases\n{}\n\n\
+             The feature development workflow is now running in the background.",
             config.feature_request,
-            phase.label(),
-            FeatureDevPhase::all().iter().position(|p| *p == phase).unwrap_or(0) + 1,
-            FeatureDevPhase::all().len(),
-            status.phase_outputs.len(),
-        ));
-
-        result.push_str("## Generated Prompt\n\n");
-        result.push_str(&prompt);
-        result.push_str("\n\n---\n\n");
-
-        // Show all phases for reference.
-        result.push_str("## All Phases\n\n");
-        for (i, p) in FeatureDevPhase::all().iter().enumerate() {
-            let marker = if *p == phase { "→" } else { " " };
-            let agent = p.agent_role().unwrap_or("(general)");
-            result.push_str(&format!(
-                "{} {}. **{}** (agent: `{}`)\n",
-                marker,
-                i + 1,
-                p.label(),
-                agent
-            ));
-        }
+            config.explorer_count,
+            config.reviewer_count,
+            config.skip_clarification,
+            phase_labels,
+        );
 
         Ok(ToolOutput::Function {
-            body: FunctionCallOutputBody::Text(result),
+            body: FunctionCallOutputBody::Text(output),
             success: Some(true),
         })
     }
 }
+

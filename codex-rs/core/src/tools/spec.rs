@@ -1514,18 +1514,158 @@ fn create_feature_pipeline_tool() -> ToolSpec {
     })
 }
 
+fn create_wiggum_loop_tool() -> ToolSpec {
+    let properties = BTreeMap::from([
+        (
+            "prompt".to_string(),
+            JsonSchema::String {
+                description: Some(
+                    "The prompt to iterate on. The agent will repeatedly process this \
+                     prompt until it signals completion."
+                        .to_string(),
+                ),
+            },
+        ),
+        (
+            "max_iterations".to_string(),
+            JsonSchema::Number {
+                description: Some(
+                    "Optional: maximum number of iterations before forced exit (default 25)."
+                        .to_string(),
+                ),
+            },
+        ),
+        (
+            "completion_promise".to_string(),
+            JsonSchema::String {
+                description: Some(
+                    "Optional: string that signals loop completion. When found in the agent's \
+                     output, the loop exits (default 'WIGGUM_LOOP_COMPLETE')."
+                        .to_string(),
+                ),
+            },
+        ),
+    ]);
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "wiggum_loop".to_string(),
+        description: "Launch an iterative development loop (Wiggum Loop). \
+            The agent will repeatedly process the given prompt, iterating until \
+            it outputs the completion signal or reaches max iterations. \
+            Useful for autonomous multi-step tasks like debugging, refactoring, or implementation."
+            .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["prompt".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_scored_review_tool() -> ToolSpec {
+    let properties = BTreeMap::from([
+        (
+            "files".to_string(),
+            JsonSchema::Array {
+                description: Some(
+                    "List of file paths to review.".to_string(),
+                ),
+                items: Box::new(JsonSchema::String {
+                    description: Some("File path".to_string()),
+                }),
+            },
+        ),
+        (
+            "confidence_threshold".to_string(),
+            JsonSchema::Number {
+                description: Some(
+                    "Optional: minimum confidence score (0-100) for findings (default 80).".to_string(),
+                ),
+            },
+        ),
+    ]);
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "scored_review".to_string(),
+        description: "Run a confidence-scored multi-agent code review. \
+            Spawns 4 parallel reviewer agents (2 guidelines auditors, bug detector, \
+            history analyzer). Each produces findings with confidence scores. \
+            Findings below the threshold are filtered out."
+            .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["files".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_feature_dev_tool() -> ToolSpec {
+    let properties = BTreeMap::from([
+        (
+            "task".to_string(),
+            JsonSchema::String {
+                description: Some(
+                    "Description of the feature to develop.".to_string(),
+                ),
+            },
+        ),
+        (
+            "explorer_count".to_string(),
+            JsonSchema::Number {
+                description: Some(
+                    "Optional: number of explorer sub-agents (default 3).".to_string(),
+                ),
+            },
+        ),
+        (
+            "reviewer_count".to_string(),
+            JsonSchema::Number {
+                description: Some(
+                    "Optional: number of reviewer sub-agents (default 2).".to_string(),
+                ),
+            },
+        ),
+        (
+            "skip_clarification".to_string(),
+            JsonSchema::Boolean {
+                description: Some(
+                    "Optional: skip the clarification phase (default false).".to_string(),
+                ),
+            },
+        ),
+    ]);
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "feature_dev".to_string(),
+        description: "Run a multi-phase feature development workflow. \
+            Phases: Clarification → Exploration → Architecture → Implementation → \
+            Testing → Review → Documentation. Each phase uses specialized sub-agents."
+            .to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: Some(vec!["task".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
 /// Builds the tool registry builder while collecting tool specs for later serialization.
 pub(crate) fn build_specs(
     config: &ToolsConfig,
     mcp_tools: Option<HashMap<String, rmcp::model::Tool>>,
     dynamic_tools: &[DynamicToolSpec],
 ) -> ToolRegistryBuilder {
-    use crate::swarm::labor_market::LaborMarket;
     use crate::tools::handlers::ApplyPatchHandler;
     use crate::tools::handlers::CollabHandler;
     use crate::tools::handlers::CreateSubagentHandler;
     use crate::tools::handlers::DynamicToolHandler;
     use crate::tools::handlers::FeaturePipelineHandler;
+    use crate::tools::handlers::ScoredReviewHandler;
+    use crate::tools::handlers::FeatureDevHandler;
     use crate::tools::handlers::GrepFilesHandler;
     use crate::tools::handlers::JsReplHandler;
     use crate::tools::handlers::JsReplResetHandler;
@@ -1542,6 +1682,7 @@ pub(crate) fn build_specs(
     use crate::tools::handlers::TestSyncHandler;
     use crate::tools::handlers::UnifiedExecHandler;
     use crate::tools::handlers::ViewImageHandler;
+    use crate::tools::handlers::WiggumLoopHandler;
     use std::sync::Arc;
 
     let mut builder = ToolRegistryBuilder::new();
@@ -1705,15 +1846,10 @@ pub(crate) fn build_specs(
         builder.register_handler("close_agent", collab_handler);
     }
 
-    // ── Swarm tools (task_dispatch + create_subagent) ──
+    // ── Swarm tools (task_dispatch + create_subagent + feature_pipeline + scored_review + feature_dev + wiggum_loop) ──
     {
-        let labor_market = Arc::new(LaborMarket::new());
-        let task_dispatch_handler = Arc::new(TaskDispatchHandler {
-            market: Arc::clone(&labor_market),
-        });
-        let create_subagent_handler = Arc::new(CreateSubagentHandler {
-            market: Arc::clone(&labor_market),
-        });
+        let task_dispatch_handler = Arc::new(TaskDispatchHandler);
+        let create_subagent_handler = Arc::new(CreateSubagentHandler);
 
         builder.push_spec(create_task_dispatch_tool());
         builder.push_spec(create_create_subagent_tool());
@@ -1723,6 +1859,18 @@ pub(crate) fn build_specs(
         let feature_pipeline_handler = Arc::new(FeaturePipelineHandler);
         builder.push_spec(create_feature_pipeline_tool());
         builder.register_handler("feature_pipeline", feature_pipeline_handler);
+
+        let scored_review_handler = Arc::new(ScoredReviewHandler);
+        builder.push_spec(create_scored_review_tool());
+        builder.register_handler("scored_review", scored_review_handler);
+
+        let feature_dev_handler = Arc::new(FeatureDevHandler);
+        builder.push_spec(create_feature_dev_tool());
+        builder.register_handler("feature_dev", feature_dev_handler);
+
+        let wiggum_loop_handler = Arc::new(WiggumLoopHandler);
+        builder.push_spec(create_wiggum_loop_tool());
+        builder.register_handler("wiggum_loop", wiggum_loop_handler);
     }
 
     if let Some(mcp_tools) = mcp_tools {

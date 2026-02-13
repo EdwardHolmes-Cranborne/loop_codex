@@ -204,6 +204,18 @@ impl FeaturePipeline {
         self.safety_guard.check(command)
     }
 
+    /// Check a shell command for safety, also producing an LLM prompt for Phase 3.
+    ///
+    /// Returns `(verdict, Option<llm_prompt>)`. If the command is already blocked
+    /// by Phase 1/2 checks, `llm_prompt` is `None`. Otherwise, the caller can
+    /// send the prompt to an LLM for deeper analysis.
+    pub fn check_command_safety_with_llm(
+        &self,
+        command: &str,
+    ) -> (super::safety_guard::SafetyVerdict, Option<String>) {
+        self.safety_guard.check_with_llm_prompt(command)
+    }
+
     /// Log a completed feature to the global implementation log.
     pub fn log_feature_completion(
         &self,

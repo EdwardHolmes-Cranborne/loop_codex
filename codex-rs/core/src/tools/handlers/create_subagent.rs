@@ -3,14 +3,11 @@
 //! Allows the model to dynamically create a new specialist agent and
 //! register it in the LaborMarket for subsequent TaskDispatch calls.
 
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use serde::Deserialize;
 
 use crate::function_tool::FunctionCallError;
 use crate::swarm::create_subagent::{CreateSubagentParams, create_subagent};
-use crate::swarm::labor_market::LaborMarket;
 use crate::tools::context::{ToolInvocation, ToolOutput, ToolPayload};
 use crate::tools::handlers::parse_arguments;
 use crate::tools::registry::{ToolHandler, ToolKind};
@@ -24,9 +21,7 @@ struct CreateSubagentArgs {
     system_prompt: String,
 }
 
-pub struct CreateSubagentHandler {
-    pub market: Arc<LaborMarket>,
-}
+pub struct CreateSubagentHandler;
 
 #[async_trait]
 impl ToolHandler for CreateSubagentHandler {
@@ -57,7 +52,10 @@ impl ToolHandler for CreateSubagentHandler {
             system_prompt: args.system_prompt,
         };
 
-        let result = create_subagent(&self.market, params);
+        // Read the LaborMarket from the session services.
+        let market = &invocation.session.services.labor_market;
+
+        let result = create_subagent(market, params);
 
         let result_json = serde_json::to_string_pretty(&result).unwrap_or_else(|_| {
             format!("create_subagent: success={}", result.success)
@@ -69,3 +67,4 @@ impl ToolHandler for CreateSubagentHandler {
         })
     }
 }
+

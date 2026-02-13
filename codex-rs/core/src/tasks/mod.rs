@@ -1,17 +1,21 @@
 mod compact;
 pub(crate) mod feature_dev;
+mod feature_dev_task;
 mod ghost_snapshot;
 pub(crate) mod global_log;
 pub(crate) mod loop_context;
 pub(crate) mod loop_types;
 pub(crate) mod pipeline;
+mod pipeline_task;
 mod regular;
 mod review;
 pub(crate) mod safety_guard;
 pub(crate) mod scored_review;
+mod scored_review_task;
 mod undo;
 mod user_shell;
 pub(crate) mod wiggum_loop;
+mod wiggum_loop_task;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,13 +49,17 @@ use codex_protocol::protocol::RolloutItem;
 use codex_protocol::user_input::UserInput;
 
 pub(crate) use compact::CompactTask;
+pub(crate) use feature_dev_task::FeatureDevTask;
 pub(crate) use ghost_snapshot::GhostSnapshotTask;
+pub(crate) use pipeline_task::PipelineTask;
 pub(crate) use regular::RegularTask;
 pub(crate) use review::ReviewTask;
+pub(crate) use scored_review_task::ScoredReviewTask;
 pub(crate) use undo::UndoTask;
 pub(crate) use user_shell::UserShellCommandMode;
 pub(crate) use user_shell::UserShellCommandTask;
 pub(crate) use user_shell::execute_user_shell_command;
+pub(crate) use wiggum_loop_task::WiggumLoopTask;
 
 const GRACEFULL_INTERRUPTION_TIMEOUT_MS: u64 = 100;
 const TURN_ABORTED_INTERRUPTED_GUIDANCE: &str = "The user interrupted the previous turn on purpose. Any running unified exec processes were terminated. If any tools/commands were aborted, they may have partially executed; verify current state before retrying.";

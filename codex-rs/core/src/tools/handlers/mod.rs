@@ -2,6 +2,7 @@ pub mod apply_patch;
 pub(crate) mod collab;
 mod create_subagent;
 mod dynamic;
+mod feature_dev;
 mod feature_pipeline;
 mod grep_files;
 mod js_repl;
@@ -11,12 +12,14 @@ mod mcp_resource;
 mod plan;
 mod read_file;
 mod request_user_input;
+mod scored_review;
 mod search_tool_bm25;
 mod shell;
 mod task_dispatch;
 mod test_sync;
 mod unified_exec;
 mod view_image;
+mod wiggum_loop;
 
 pub use plan::PLAN_TOOL;
 use serde::Deserialize;
@@ -26,6 +29,7 @@ pub use apply_patch::ApplyPatchHandler;
 pub use collab::CollabHandler;
 pub use create_subagent::CreateSubagentHandler;
 pub use dynamic::DynamicToolHandler;
+pub use feature_dev::FeatureDevHandler;
 pub use feature_pipeline::FeaturePipelineHandler;
 pub use grep_files::GrepFilesHandler;
 pub use js_repl::JsReplHandler;
@@ -38,6 +42,7 @@ pub use read_file::ReadFileHandler;
 pub use request_user_input::RequestUserInputHandler;
 pub(crate) use request_user_input::request_user_input_tool_description;
 pub(crate) use search_tool_bm25::DEFAULT_LIMIT as SEARCH_TOOL_BM25_DEFAULT_LIMIT;
+pub use scored_review::ScoredReviewHandler;
 pub use search_tool_bm25::SearchToolBm25Handler;
 pub use shell::ShellCommandHandler;
 pub use shell::ShellHandler;
@@ -45,6 +50,7 @@ pub use task_dispatch::TaskDispatchHandler;
 pub use test_sync::TestSyncHandler;
 pub use unified_exec::UnifiedExecHandler;
 pub use view_image::ViewImageHandler;
+pub use wiggum_loop::WiggumLoopHandler;
 
 fn parse_arguments<T>(arguments: &str) -> Result<T, FunctionCallError>
 where
