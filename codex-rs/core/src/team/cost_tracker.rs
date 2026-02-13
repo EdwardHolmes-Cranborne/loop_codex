@@ -192,7 +192,7 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn make_tracker(dir: &Path) -> CostTracker {
+    fn make_tracker(dir: &std::path::Path) -> CostTracker {
         CostTracker::new(
             dir.join("costs.jsonl"),
             500.0,
