@@ -104,7 +104,22 @@ impl SessionTask for PipelineTask {
                 // Build WiggumLoopConfig from pipeline
                 let loop_config = pipeline.build_loop_config(*phase);
 
-                // Safety check the prompt via SafetyGuard (Phase 1/2 + Phase 3 LLM prompt)
+                // Fast Phase 1/2 safety pre-check (no LLM overhead)
+                let quick_verdict = pipeline.check_command_safety(&loop_config.prompt);
+                if !quick_verdict.safe {
+                    let risk_info = quick_verdict.risk_category
+                        .map(|c| format!("{} {}", c.emoji(), c.label()))
+                        .unwrap_or_default();
+                    let reason = format!(
+                        "Safety guard (Phase 1/2) blocked phase {} for feature '{}': {} ({})",
+                        phase.label(), feature.name, quick_verdict.explanation, risk_info,
+                    );
+                    warn!("{reason}");
+                    pipeline.set_failed(feat_idx, *phase, reason);
+                    break;
+                }
+
+                // Full Phase 3 LLM safety check (more expensive, includes prompt generation)
                 let (safety_verdict, llm_safety_prompt) =
                     pipeline.check_command_safety_with_llm(&loop_config.prompt);
 

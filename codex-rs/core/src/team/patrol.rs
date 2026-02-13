@@ -50,6 +50,16 @@ pub fn run_patrol(
             "patrol: found {} TODO/FIXME markers",
             todos.len()
         );
+        for todo in &todos {
+            tracing::debug!(
+                agent = %agent.id,
+                file = %todo.file,
+                line = todo.line_number,
+                "patrol: {} => {}",
+                todo.file,
+                todo.text,
+            );
+        }
         // Log them but don't auto-create subtasks yet (Phase 4)
     }
 

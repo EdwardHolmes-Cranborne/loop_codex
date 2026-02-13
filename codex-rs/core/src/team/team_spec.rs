@@ -354,6 +354,24 @@ impl std::fmt::Display for TeamSpecError {
 
 impl std::error::Error for TeamSpecError {}
 
+impl TeamSpec {
+    /// Create a default TeamSpec with a given agent count.
+    pub fn default_with_agents(count: u32) -> Self {
+        Self {
+            team_name: "my-team".to_string(),
+            git: GitConfig::default(),
+            agents: AgentTeamConfig {
+                count,
+                ..AgentTeamConfig::default()
+            },
+            tasks: TaskSourceConfig::default(),
+            budget: BudgetConfig::default(),
+            validation: ValidationConfig::default(),
+            context: ContextConfig::default(),
+        }
+    }
+}
+
 /// Load a [`TeamSpec`] from a YAML file.
 pub fn load_team_spec(path: &Path) -> Result<TeamSpec, TeamSpecError> {
     let contents = std::fs::read_to_string(path).map_err(|e| TeamSpecError::Io {

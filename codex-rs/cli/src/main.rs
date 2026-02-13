@@ -36,6 +36,7 @@ mod app_cmd;
 #[cfg(target_os = "macos")]
 mod desktop_app;
 mod mcp_cmd;
+mod team_cmd;
 #[cfg(not(windows))]
 mod wsl_paths;
 
@@ -143,6 +144,10 @@ enum Subcommand {
 
     /// Inspect feature flags.
     Features(FeaturesCli),
+
+    /// Manage a parallel agent team.
+    #[clap(visible_alias = "t")]
+    Team(team_cmd::TeamCli),
 }
 
 #[derive(Debug, Parser)]
@@ -818,6 +823,9 @@ async fn cli_main(codex_linux_sandbox_exe: Option<PathBuf>) -> anyhow::Result<()
                 disable_feature_in_config(&interactive, &feature).await?;
             }
         },
+        Some(Subcommand::Team(team_cli)) => {
+            team_cmd::run_team_command(team_cli).await?;
+        }
     }
 
     Ok(())
