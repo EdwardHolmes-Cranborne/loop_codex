@@ -14,6 +14,31 @@ use super::agent_process::{AgentProcess, AgentStatus};
 use super::cost_tracker::{CostEntry, CostTracker};
 use super::git_coordinator::GitCoordinator;
 use super::task_board::{TaskBoard, TaskStatus, load_task_board, save_task_board};
+use crate::tools::sandboxing::{Sandboxable, SandboxablePreference};
+
+/// Sandbox policy for team agent tool execution.
+///
+/// When running under Docker isolation, we `Require` sandboxing.
+/// When running local validation commands (e.g. tests), we `Forbid`
+/// sandboxing since the commands need direct filesystem access.
+pub(crate) struct TeamSandboxPolicy {
+    pub use_docker: bool,
+}
+
+impl Sandboxable for TeamSandboxPolicy {
+    fn sandbox_preference(&self) -> SandboxablePreference {
+        if self.use_docker {
+            SandboxablePreference::Require
+        } else {
+            SandboxablePreference::Forbid
+        }
+    }
+
+    fn escalate_on_failure(&self) -> bool {
+        // Team agents should not escalate; let the daemon handle retries.
+        false
+    }
+}
 
 /// Configuration for the autonomous loop.
 pub struct LoopConfig {
@@ -43,6 +68,8 @@ pub struct LoopConfig {
     pub include_test_output: bool,
     /// Max test output lines.
     pub max_test_output_lines: u32,
+    /// Whether agents are running under Docker isolation.
+    pub use_docker: bool,
 }
 
 /// Result of running a single codex session.
@@ -243,7 +270,7 @@ pub fn run_autonomous_loop(
                 // 14. Run tests (if configured)
                 agent.status = AgentStatus::RunningTests;
                 let test_passed = if let Some(ref test_cmd) = config.test_command {
-                    run_test_command(test_cmd, &git.work_dir, config.test_timeout_seconds)
+                    run_test_command(test_cmd, &git.work_dir, config.test_timeout_seconds, config.use_docker)
                 } else {
                     true
                 };
@@ -496,11 +523,21 @@ fn run_codex_session(
 }
 
 /// Run the test command and return whether it passed.
-fn run_test_command(test_cmd: &str, work_dir: &Path, _timeout_secs: u32) -> bool {
+fn run_test_command(test_cmd: &str, work_dir: &Path, _timeout_secs: u32, use_docker: bool) -> bool {
     let parts: Vec<&str> = test_cmd.split_whitespace().collect();
     if parts.is_empty() {
         return true;
     }
+
+    // Determine sandbox preference for this command
+    let policy = TeamSandboxPolicy { use_docker };
+    let pref = policy.sandbox_preference();
+    tracing::debug!(
+        cmd = test_cmd,
+        sandbox = ?pref,
+        escalate = policy.escalate_on_failure(),
+        "running test command with sandbox preference",
+    );
 
     let result = Command::new(parts[0])
         .args(&parts[1..])
@@ -548,6 +585,7 @@ mod tests {
             include_test_output: false,
             max_test_output_lines: 200,
             test_timeout_seconds: 300,
+            use_docker: false,
         };
 
         let prompt = build_agent_prompt("Parse C files", "Implement parser", &git, &board, &config);
@@ -582,6 +620,7 @@ mod tests {
             include_test_output: false,
             max_test_output_lines: 200,
             test_timeout_seconds: 300,
+            use_docker: false,
         };
 
         let prompt = build_agent_prompt("My Task", "", &git, &board, &config);

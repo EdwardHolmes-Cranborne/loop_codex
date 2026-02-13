@@ -247,7 +247,15 @@ async fn resolve_aggregated_output(
         return fallback;
     }
 
-    String::from_utf8_lossy(&guard.to_bytes()).to_string()
+    let mut output = String::from_utf8_lossy(&guard.to_bytes()).to_string();
+    let omitted = guard.omitted_bytes();
+    if omitted > 0 {
+        output.push_str(&format!(
+            "\n\n[... {} bytes omitted from middle of output ...]\n",
+            omitted
+        ));
+    }
+    output
 }
 
 #[cfg(test)]
